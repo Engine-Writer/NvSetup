@@ -1,0 +1,36 @@
+#!/usr/bin/env zsh
+clear
+
+typewriter() {
+    local text="$1"
+    local color="$2"
+    for (( i=1; i<=${#text}; i++ )); do
+        # Get the current character
+        local char="${text:$i:1}"
+        
+        # Print the character
+        printf "\e[38;2;${color}m${char}\e[0m"
+        
+        # Check for punctuation to add pauses
+        if [[ "$char" == "," ]]; then
+            sleep 0.3  # Pause after a comma
+        elif [[ "$char" == "." || "$char" == "!" || "$char" == "?" ]]; then
+            sleep 0.4  # Pause after a period or sentence end
+        else
+            sleep 0.04 # Normal typing speed
+        fi
+    done
+    echo ""
+}
+
+# Type out the lines
+typewriter " Hey, Im NullStack" "158;206;106"
+sleep 0.6
+typewriter " > C++ Developer" "122;162;247"
+sleep 0.6
+typewriter " > Embedded Systems Developer" "187;154;247"
+sleep 0.6
+typewriter " > Here are some of my projects" "224;175;104"
+
+# Wait so the shell prompt doesn't appear
+sleep 19

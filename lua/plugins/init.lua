@@ -7,6 +7,7 @@ return {
 
   {
     "neovim/nvim-lspconfig",
+    lazy = false, -- don't depend on NvChad's own spec supplying a trigger
     config = function()
       require "configs.lspconfig"
     end,
@@ -60,19 +61,26 @@ return {
         "slang-server",
         -- ASM (x86/x86_64/ARM/RISC-V)
         "asm-lsp",
-        "intelephense",
+        "intelephense", -- shh
         -- Lua
         "lua-language-server",
       },
     },
   },
-
   {
     "nvim-treesitter/nvim-treesitter",
-    branch = "main", -- CHANGED from "master"
+    branch = "main",
     build = ":TSUpdate",
-    main = "nvim-treesitter.config", -- ADDED for the new main branch
+    -- must load before FileType fires on the first buffer, since its
+    -- config() registers the autocmd that starts the parser; being pulled
+    -- in late as another plugin's dependency (on BufReadPost) is too late
+    event = { "BufReadPre", "BufNewFile" },
     opts = {
+      -- NOTE: on the main branch, ensure_installed is no longer a setup()
+      -- table option — it's just read here as a plain list for US to pass
+      -- to require("nvim-treesitter").install() and to build the FileType
+      -- autocmd pattern below. The old all-in-one setup({ensure_installed=..})
+      -- call silently did nothing on main; parsers never actually installed.
       ensure_installed = {
         "vim",
         "vimdoc",
@@ -103,6 +111,16 @@ return {
         "css",
       },
     },
+    config = function(_, opts)
+      require("nvim-treesitter").install(opts.ensure_installed)
+
+      vim.api.nvim_create_autocmd("FileType", {
+        pattern = opts.ensure_installed,
+        callback = function(args)
+          vim.treesitter.start(args.buf)
+        end,
+      })
+    end,
   },
 
   -- test new blink
@@ -153,13 +171,13 @@ return {
       local c = require("base46").get_theme_tb "base_30"
 
       -- Dim/desaturate the editor behind a float with a full-screen backdrop
-      local backdrop_win
+      local backdrop_buf, backdrop_win
       local function open_backdrop()
         if backdrop_win and vim.api.nvim_win_is_valid(backdrop_win) then
           return
         end
-        local buf = vim.api.nvim_create_buf(false, true)
-        backdrop_win = vim.api.nvim_open_win(buf, false, {
+        backdrop_buf = vim.api.nvim_create_buf(false, true)
+        backdrop_win = vim.api.nvim_open_win(backdrop_buf, false, {
           relative = "editor",
           row = 0,
           col = 0,
@@ -177,7 +195,10 @@ return {
         if backdrop_win and vim.api.nvim_win_is_valid(backdrop_win) then
           vim.api.nvim_win_close(backdrop_win, true)
         end
-        backdrop_win = nil
+        if backdrop_buf and vim.api.nvim_buf_is_valid(backdrop_buf) then
+          vim.api.nvim_buf_delete(backdrop_buf, { force = true })
+        end
+        backdrop_win, backdrop_buf = nil, nil
       end
 
       return {
@@ -218,39 +239,63 @@ return {
       }
     end,
   },
+
   {
     "nvim-treesitter/nvim-treesitter-textobjects",
-    branch = "main", -- CHANGED from "master"
-    dependencies = "nvim-treesitter/nvim-treesitter",
-    event = "VeryLazy",
-    opts = {
-      -- The new main branch textobjects config goes inside `opts.select`, `opts.move`, etc.
-      select = {
-        enable = true,
-        lookahead = true,
-        keymaps = {
-          ["af"] = "@function.outer",
-          ["if"] = "@function.inner",
-          ["ac"] = "@class.outer",
-          ["ic"] = "@class.inner",
-          ["aa"] = "@parameter.outer",
-          ["ia"] = "@parameter.inner",
+    branch = "main",
+    dependencies = { "nvim-treesitter/nvim-treesitter" },
+    event = { "BufReadPost", "BufNewFile" },
+    init = function()
+      -- the plugin's own built-in default mappings would otherwise fight
+      -- with the custom ones set up below
+      vim.g.no_plugin_maps = true
+    end,
+    config = function()
+      require("nvim-treesitter-textobjects").setup {
+        select = {
+          lookahead = true,
+          selection_modes = {
+            ["@function.outer"] = "V",
+            ["@class.outer"] = "V",
+          },
         },
-      },
-      move = {
-        enable = true,
-        set_jumps = true,
-        goto_next_start = {
-          ["]f"] = "@function.outer",
-          ["]c"] = "@class.outer",
+        move = {
+          set_jumps = true,
         },
-        goto_previous_start = {
-          ["[f"] = "@function.outer",
-          ["[c"] = "@class.outer",
-        },
-      },
-    },
+      }
+
+      local select = require "nvim-treesitter-textobjects.select"
+      local move = require "nvim-treesitter-textobjects.move"
+
+      local textobjects = {
+        ["af"] = "@function.outer",
+        ["if"] = "@function.inner",
+        ["ac"] = "@class.outer",
+        ["ic"] = "@class.inner",
+        ["aa"] = "@parameter.outer",
+        ["ia"] = "@parameter.inner",
+      }
+      for map, query in pairs(textobjects) do
+        vim.keymap.set({ "x", "o" }, map, function()
+          select.select_textobject(query, "textobjects")
+        end, { desc = "Select " .. query })
+      end
+
+      vim.keymap.set({ "n", "x", "o" }, "]f", function()
+        move.goto_next_start("@function.outer", "textobjects")
+      end, { desc = "Next function start" })
+      vim.keymap.set({ "n", "x", "o" }, "]c", function()
+        move.goto_next_start("@class.outer", "textobjects")
+      end, { desc = "Next class start" })
+      vim.keymap.set({ "n", "x", "o" }, "[f", function()
+        move.goto_previous_start("@function.outer", "textobjects")
+      end, { desc = "Previous function start" })
+      vim.keymap.set({ "n", "x", "o" }, "[c", function()
+        move.goto_previous_start("@class.outer", "textobjects")
+      end, { desc = "Previous class start" })
+    end,
   },
+
   -- fun stuff
   {
     "ThePrimeagen/vim-be-good",
@@ -260,6 +305,69 @@ return {
     "MeanderingProgrammer/render-markdown.nvim",
     dependencies = { "nvim-treesitter/nvim-treesitter", "nvim-tree/nvim-web-devicons" },
     ft = "markdown",
+    opts = {},
+  },
+  {
+    "folke/snacks.nvim",
+    priority = 1000,
+    lazy = false,
+    opts = {
+      bigfile = { enabled = true },
+      dashboard = { enabled = true },
+      explorer = { enabled = false },
+      indent = { enabled = true },
+      input = { enabled = true },
+      picker = { enabled = true },
+      notifier = { enabled = true },
+      quickfile = { enabled = true },
+      scope = { enabled = true },
+      scroll = { enabled = true },
+      statuscolumn = { enabled = true },
+      words = { enabled = true },
+      image = { enabled = true },
+      git = { enabled = true },
+    },
+  },
+  {
+    "folke/todo-comments.nvim",
+    dependencies = { "nvim-lua/plenary.nvim" },
+    event = { "BufReadPost", "BufNewFile" },
+    opts = {
+      signs = true,
+      keywords = {
+        FIX = { icon = " ", color = "error", alt = { "FIXME", "BUG", "FIXIT", "ISSUE" } },
+        TODO = { icon = " ", color = "info", alt = { "todo" } },
+        HACK = { icon = " ", color = "warning" },
+        WARN = { icon = " ", color = "warning", alt = { "WARNING", "XXX" } },
+        PERF = { icon = " ", alt = { "OPTIM", "PERFORMANCE", "OPTIMIZE" } },
+        NOTE = { icon = " ", color = "hint", alt = { "INFO" } },
+        TEST = { icon = "⏲ ", color = "test", alt = { "TESTING", "PASSED", "FAILED" } },
+      },
+      highlight = {
+        multiline = true,
+        before = "",
+        keyword = "wide",
+        pattern = {
+          [[.*<(KEYWORDS)\s*:]],
+          [[.*@(KEYWORDS)\b]],
+        },
+      },
+      search = {
+        command = "rg",
+        args = {
+          "--color=never",
+          "--no-heading",
+          "--with-filename",
+          "--line-number",
+          "--column",
+        },
+        pattern = [[(?i)\b(KEYWORDS):|@(KEYWORDS)\b]],
+      },
+    },
+  },
+  {
+    "J-Cowsert/classlayout.nvim",
+    ft = { "c", "cpp" },
     opts = {},
   },
 }
